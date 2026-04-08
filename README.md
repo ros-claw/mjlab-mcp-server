@@ -1,5 +1,7 @@
 # MJLab MCP Server
 
+🌐 **English** | [中文](./README.zh.md)
+
 ROSClaw MCP Server for **MuJoCo Physics Simulation** - The e-URDF Safety Firewall.
 
 Part of the [ROSClaw](https://github.com/ros-claw) Embodied Intelligence Operating System.
