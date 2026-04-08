@@ -1,0 +1,78 @@
+[project]
+name = "mjlab-mcp-server"
+version = "0.1.0"
+description = "ROSClaw MCP Server for mjlab - Physics Sandbox Firewall for Robot Safety Validation"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "ROSClaw Team", email = "ros-claw@example.com"},
+]
+keywords = ["mcp", "mujoco", "mjlab", "robotics", "physics", "safety", "rosclaw", "e-urdf"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "mujoco>=3.0.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ros-claw/mjlab-mcp-server"
+Documentation = "https://github.com/ros-claw/mjlab-mcp-server/blob/main/README.md"
+Repository = "https://github.com/ros-claw/mjlab-mcp-server"
+Issues = "https://github.com/ros-claw/mjlab-mcp-server/issues"
+
+[project.scripts]
+mjlab-mcp-server = "mjlab_mcp_server.server:main"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+select = ["E", "F", "W", "I", "N", "D", "UP", "B", "C4", "SIM"]
+ignore = ["D100", "D104"]
+
+[tool.ruff.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "hardware: marks tests that require real hardware",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
