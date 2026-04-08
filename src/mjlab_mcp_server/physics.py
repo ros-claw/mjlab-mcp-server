@@ -12,9 +12,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import os
+import threading
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
 import mujoco
 import numpy as np
 import yaml
+
+from .semantic_translator import SemanticTranslator, SemanticViolation
 
 
 @dataclass
@@ -95,11 +103,14 @@ class PhysicsSandbox:
     robot movements before execution on real hardware.
     """
 
+    _lock = threading.RLock()
+
     def __init__(
         self,
         model_path: str,
         policy_path: str | None = None,
         safety_margin: float = 0.05,
+        e_urdf_config: dict | None = None,
     ):
         """
         Initialize the physics sandbox.
@@ -121,12 +132,22 @@ class PhysicsSandbox:
         else:
             self.policy = self._create_default_policy()
 
+        # Store e-URDF config
+        self.e_urdf_config = e_urdf_config or {}
+
+        # Initialize semantic translator
+        self.translator = SemanticTranslator(self, self.e_urdf_config)
+
         # Extract joint information
         self._extract_joint_info()
+
+        # Initialize violations tracking
+        self.violations: list[SemanticViolation] = []
 
         print(f"[PhysicsSandbox] Loaded model: {model_path}")
         print(f"[PhysicsSandbox] Joints: {self.joint_names}")
         print(f"[PhysicsSandbox] DOF: nq={self.nq}, nv={self.nv}, nu={self.nu}")
+        print(f"[PhysicsSandbox] Semantic translator: {'enabled' if self.e_urdf_config else 'disabled'}")
 
     def _load_model(self) -> None:
         """Load MuJoCo model from file."""
@@ -532,6 +553,28 @@ class PhysicsSandbox:
             or torque_limit_exceeded
         )
 
+        # Generate semantic violations for better error messages
+        self.violations = []
+        if self.translator:
+            if collision_detected and all_collision_details:
+                # Get semantic collision info
+                contacts = self.translator.get_collision_summary(duration_sec)
+                for contact in contacts[:3]:  # Limit to first 3
+                    violation = self.translator.translate_violation(
+                        violation_type="COLLISION",
+                        raw_message=contact.to_natural_language(),
+                        context={"contact": contact},
+                    )
+                    self.violations.append(violation)
+
+            if joint_limit_violated:
+                for detail in all_joint_limit_details[:3]:
+                    violation = self.translator.translate_violation(
+                        violation_type="JOINT_LIMIT",
+                        raw_message=detail,
+                    )
+                    self.violations.append(violation)
+
         # Generate summary reason
         if is_safe:
             reason = "Physics simulation passed. No safety violations detected."
@@ -560,6 +603,12 @@ class PhysicsSandbox:
             final_qpos=self.data.qpos[: self.nq].tolist(),
             max_torque_observed=max_torque_observed,
         )
+
+    def get_semantic_error_message(self) -> str:
+        """Get human-readable error message using semantic translator."""
+        if not self.translator or not self.violations:
+            return "No violations to report."
+        return self.translator.format_error_response(self.violations)
 
     def add_environment_object(
         self,

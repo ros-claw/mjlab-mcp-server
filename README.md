@@ -167,22 +167,56 @@ collision_exclude_pairs:
 safety_margin: 0.05  # 5%
 ```
 
-## MuJoCo Menagerie Integration
+## 3D Asset Integration
 
-This server integrates with [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) for ready-to-use robot models:
+### e-URDF Zoo (Recommended)
 
-| Robot | Path | DOF |
-|-------|------|-----|
-| **Universal Robots UR5e** | `universal_robots_ur5e/ur5e.xml` | 6 |
-| **Franka FR3** | `franka_fr3/fr3.xml` | 7 |
-| **Boston Dynamics Spot** | `boston_dynamics_spot/spot.xml` | 12 |
-| **Unitree G1** | `unitree_g1/g1.xml` | 29 |
-| **Agility Cassie** | `agility_cassie/cassie.xml` | 10 |
+This server integrates with **[e-URDF Zoo](https://github.com/ros-claw/e-urdf-zoo)** for pre-configured robot assets with safety policies:
 
-To use a model:
+| Robot | ID | DOF | Features |
+|-------|-----|-----|----------|
+| **Universal Robots UR5e** | `universal_robots_ur5e` | 6 | Full e-URDF config, collision semantics |
+| **Unitree G1** | `unitree_g1` | 23 | Humanoid, balance checks, ZMP validation |
+| **Franka FR3** | `franka_fr3` | 7 | Collaborative arm (skeleton) |
+| **Boston Dynamics Spot** | `boston_dynamics_spot` | 12 | Quadruped (skeleton) |
+
+**Total**: 63 robots from MuJoCo Menagerie with standardized configs
+
+### Usage Examples
+
+#### Option 1: Dynamic Loading (Recommended)
 ```python
+# Use the load_embodiment tool to load from e-URDF-Zoo
+load_embodiment(embodiment_id="universal_robots_ur5e")
+
+# The server automatically:
+# - Downloads model from e-URDF-Zoo if needed
+# - Loads MuJoCo MJCF/XML
+# - Applies safety policy from e_urdf.json
+# - Enables semantic error translation
+```
+
+#### Option 2: Direct Model Path
+```python
+# Use local model file
 load_model(
-    model_path="/root/workspace/rosclaw/e-urdf/mujoco_menagerie/universal_robots_ur5e/ur5e.xml"
+    model_path="/path/to/robot.xml",
+    policy_path="/path/to/policy.yaml"
+)
+```
+
+#### Option 3: Python API
+```python
+from mjlab_mcp_server.physics import PhysicsSandbox
+from e_urdf_zoo import load_embodiment
+
+# Load embodiment config
+asset = load_embodiment("unitree_g1")
+
+# Initialize sandbox with safety policy
+sandbox = PhysicsSandbox(
+    model_path=asset.model_xml,
+    policy=asset.config.physical_firewall
 )
 ```
 
@@ -263,8 +297,11 @@ pytest tests/ --cov=mjlab_mcp_server --cov-report=html
 
 - [MuJoCo Documentation](https://mujoco.readthedocs.io/)
 - [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie)
+- [mjlab](https://github.com/mujocolab/mjlab) — GPU-accelerated MuJoCo batch simulation
+- [mjlab Documentation](https://mujocolab.github.io/mjlab/)
+- [e-URDF Zoo](https://github.com/ros-claw/e-urdf-zoo) — Pre-configured robot assets with safety policies
 - [MCP Protocol](https://modelcontextprotocol.io/)
-- [e-URDF Design Document](../e-urdf/COGNITION_SUMMARY.md)
+- [ROSClaw Architecture](../rosclaw/ROSClaw_具身智能操作系统工程白皮书_(V1.0).md)
 
 ## Part of ROSClaw
 
