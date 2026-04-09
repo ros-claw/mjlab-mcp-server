@@ -40,8 +40,10 @@ _batch_validator: BatchValidator | None = None
 # Semantic translator (initialized lazily)
 _semantic_translator: SemanticTranslator | None = None
 
-# Default e-URDF-Zoo path
-E_URDF_ZOO_PATH = Path(os.environ.get("E_URDF_ZOO_PATH", "/root/workspace/rosclaw/e-urdf/e-urdf-zoo"))
+# Default e-URDF-Zoo path: resolve next to the package installation (e.g. ../e-urdf-zoo)
+_DEFAULT_E_URDF_ZOO_PATH = str(Path(__file__).resolve().parent.parent.parent.parent / "e-urdf-zoo")
+E_URDF_ZOO_PATH = Path(os.environ.get("E_URDF_ZOO_PATH", _DEFAULT_E_URDF_ZOO_PATH))
+MUJOCO_MENAGERIE_PATH = Path(os.environ.get("MUJOCO_MENAGERIE_PATH", str(E_URDF_ZOO_PATH.parent / "mujoco_menagerie")))
 
 
 def get_e_urdf_robot_path(robot_id: str) -> Path | None:
@@ -71,13 +73,23 @@ def get_sandbox() -> PhysicsSandbox:
             # Try to find UR5e in e-URDF-Zoo first, then menagerie
             zoo_path = get_e_urdf_robot_path("universal_robots_ur5e")
             if zoo_path:
-                model_path = str(zoo_path / "model.xml")
                 # Auto-load config
                 load_e_urdf_config_internal(zoo_path)
+
+                # Resolve actual model path (model.xml may include menagerie)
+                actual_model = zoo_path / "model.xml"
+                with open(actual_model, "r") as f:
+                    content = f.read()
+                    if "mujoco_menagerie" in content and "include" in content:
+                        if MUJOCO_MENAGERIE_PATH.exists():
+                            ur5e_path = MUJOCO_MENAGERIE_PATH / "universal_robots_ur5e" / "ur5e.xml"
+                            if ur5e_path.exists():
+                                actual_model = ur5e_path
+
+                model_path = str(actual_model)
             else:
-                menagerie_path = Path("/root/workspace/rosclaw/e-urdf/mujoco_menagerie")
-                if menagerie_path.exists():
-                    ur5e_path = menagerie_path / "universal_robots_ur5e" / "ur5e.xml"
+                if MUJOCO_MENAGERIE_PATH.exists():
+                    ur5e_path = MUJOCO_MENAGERIE_PATH / "universal_robots_ur5e" / "ur5e.xml"
                     if ur5e_path.exists():
                         model_path = str(ur5e_path)
 
@@ -88,7 +100,11 @@ def get_sandbox() -> PhysicsSandbox:
             )
 
         policy_path = os.environ.get("SAFETY_POLICY_PATH")
-        _sandbox = PhysicsSandbox(model_path, policy_path)
+        _sandbox = PhysicsSandbox(
+            model_path,
+            policy_path,
+            e_urdf_config=_current_e_urdf_config,
+        )
 
     return _sandbox
 
@@ -141,16 +157,15 @@ def load_embodiment(robot_id: str) -> str:
             content = f.read()
             if "mujoco_menagerie" in content and "include" in content:
                 # Use actual menagerie model
-                menagerie_path = Path("/root/workspace/rosclaw/e-urdf/mujoco_menagerie")
-                if menagerie_path.exists():
+                if MUJOCO_MENAGERIE_PATH.exists():
                     # Parse the include path
                     if "universal_robots_ur5e" in robot_id:
-                        actual_model = menagerie_path / "universal_robots_ur5e" / "ur5e.xml"
+                        actual_model = MUJOCO_MENAGERIE_PATH / "universal_robots_ur5e" / "ur5e.xml"
                     elif "unitree_g1" in robot_id:
-                        actual_model = menagerie_path / "unitree_g1" / "g1.xml"
+                        actual_model = MUJOCO_MENAGERIE_PATH / "unitree_g1" / "g1.xml"
                     else:
                         # Try to find matching model
-                        for item in menagerie_path.iterdir():
+                        for item in MUJOCO_MENAGERIE_PATH.iterdir():
                             if item.is_dir() and robot_id.replace("_", "") in item.name.replace("_", ""):
                                 xml_files = list(item.glob("*.xml"))
                                 if xml_files:
@@ -167,12 +182,13 @@ def load_embodiment(robot_id: str) -> str:
         firewall_config = _current_e_urdf_config.get("physical_firewall", {})
         safety_margin = firewall_config.get("safety_margins", {}).get("joint_position", 0.05)
 
-        # Load into sandbox
+        # Load into sandbox with full e-URDF config
         _default_model_path = str(actual_model)
-        _sandbox = PhysicsSandbox(str(actual_model), safety_margin=safety_margin)
-
-        # Apply e-URDF safety constraints
-        constraints = firewall_config.get("constraints", {})
+        _sandbox = PhysicsSandbox(
+            str(actual_model),
+            safety_margin=safety_margin,
+            e_urdf_config=_current_e_urdf_config,
+        )
 
         info = _sandbox.get_model_info()
 
@@ -513,13 +529,11 @@ def list_available_models() -> str:
     Returns:
         List of available models that can be loaded
     """
-    menagerie_path = Path("/root/workspace/rosclaw/e-urdf/mujoco_menagerie")
-
-    if not menagerie_path.exists():
+    if not MUJOCO_MENAGERIE_PATH.exists():
         return "❌ MuJoCo Menagerie not found at expected path."
 
     models = []
-    for item in menagerie_path.iterdir():
+    for item in MUJOCO_MENAGERIE_PATH.iterdir():
         if item.is_dir() and not item.name.startswith("."):
             # Look for XML files
             xml_files = list(item.glob("*.xml"))
@@ -537,7 +551,7 @@ def list_available_models() -> str:
         response += f"    XML: {xml_file}\n"
 
     response += f"\n💡 To load a model, use:\n"
-    response += f"   load_model with path: {menagerie_path}/[model_name]/[xml_file]"
+    response += f"   load_model with path: {MUJOCO_MENAGERIE_PATH}/[model_name]/[xml_file]"
 
     return response
 

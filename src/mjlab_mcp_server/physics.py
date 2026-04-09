@@ -126,14 +126,14 @@ class PhysicsSandbox:
         # Load MuJoCo model
         self._load_model()
 
+        # Store e-URDF config early so _create_default_policy can use it
+        self.e_urdf_config = e_urdf_config or {}
+
         # Load or create safety policy
         if policy_path and os.path.exists(policy_path):
             self.policy = SafetyPolicy.from_yaml(policy_path)
         else:
             self.policy = self._create_default_policy()
-
-        # Store e-URDF config
-        self.e_urdf_config = e_urdf_config or {}
 
         # Initialize semantic translator
         self.translator = SemanticTranslator(self, self.e_urdf_config)
@@ -171,32 +171,66 @@ class PhysicsSandbox:
             raise RuntimeError(f"Failed to load MuJoCo model: {e}") from e
 
     def _create_default_policy(self) -> SafetyPolicy:
-        """Create default safety policy from model."""
+        """Create default safety policy from model or e_URDF config."""
         joint_names = []
         joint_limits = {}
+        joint_velocity_limits = {}
         torque_limits = {}
+        collision_exclude_pairs = []
 
-        # Extract from MuJoCo model
-        for i in range(self.model.njnt):
-            joint_id = mujoco.mj_id2name(
-                self.model, mujoco.mjtObj.mjOBJ_JOINT, i
-            )
-            joint_names.append(joint_id)
+        # If e_URDF config is available, prefer it over raw MJCF limits
+        if self.e_urdf_config:
+            joints_cfg = self.e_urdf_config.get("joints", {})
+            joint_names = joints_cfg.get("names", [])
+            limits_cfg = joints_cfg.get("limits", {})
+            joint_limits = {
+                k: tuple(v)
+                for k, v in limits_cfg.get("position_rad", {}).items()
+            }
+            joint_velocity_limits = {
+                k: float(v)
+                for k, v in limits_cfg.get("velocity_rad_s", {}).items()
+            }
+            torque_limits = {
+                k: float(v)
+                for k, v in limits_cfg.get("torque_nm", {}).items()
+            }
+            fw_cfg = self.e_urdf_config.get("physical_firewall", {})
+            collision_exclude_pairs = [
+                tuple(pair)
+                for pair in fw_cfg.get("excluded_collision_pairs", [])
+            ]
 
-            # Get joint limits from model
-            jnt_range = self.model.jnt_range[i]
-            if jnt_range[0] < jnt_range[1]:  # Valid range
-                joint_limits[joint_id] = (float(jnt_range[0]), float(jnt_range[1]))
+        # Fallback to MuJoCo model for anything missing
+        if not joint_names:
+            for i in range(self.model.njnt):
+                joint_id = mujoco.mj_id2name(
+                    self.model, mujoco.mjtObj.mjOBJ_JOINT, i
+                )
+                joint_names.append(joint_id)
 
-        # Default torque limits (can be overridden by policy file)
-        default_torque = 100.0
-        for i in range(min(self.nu, len(joint_names))):
-            torque_limits[joint_names[i]] = default_torque
+        if not joint_limits:
+            for i in range(self.model.njnt):
+                joint_id = mujoco.mj_id2name(
+                    self.model, mujoco.mjtObj.mjOBJ_JOINT, i
+                )
+                jnt_range = self.model.jnt_range[i]
+                if jnt_range[0] < jnt_range[1]:  # Valid range
+                    joint_limits[joint_id] = (
+                        float(jnt_range[0]), float(jnt_range[1])
+                    )
+
+        if not torque_limits:
+            default_torque = 100.0
+            for i in range(min(self.nu, len(joint_names))):
+                torque_limits[joint_names[i]] = default_torque
 
         return SafetyPolicy(
             joint_names=joint_names,
             joint_limits=joint_limits,
+            joint_velocity_limits=joint_velocity_limits,
             torque_limits=torque_limits,
+            collision_exclude_pairs=collision_exclude_pairs,
             safety_margin=self.safety_margin,
         )
 
@@ -498,10 +532,28 @@ class PhysicsSandbox:
             if control_mode == "position":
                 # PD control toward interpolated position
                 desired_pos = current_array * (1 - progress) + target_array * progress
-                pos_error = desired_pos - self.data.qpos[: self.nq]
-                vel_error = -self.data.qvel[: self.nv]
-                control = kp * pos_error + kd * vel_error
-                self.apply_control(control[: self.nu])
+
+                # Check if MuJoCo actuators already have built-in position control
+                # (common in MuJoCo Menagerie models: GAIN_FIXED + BIAS_AFFINE)
+                has_builtin_pos_ctrl = (
+                    self.nu > 0
+                    and all(
+                        self.model.actuator_gaintype[i]
+                        == mujoco.mjtGain.mjGAIN_FIXED
+                        and self.model.actuator_biastype[i]
+                        == mujoco.mjtBias.mjBIAS_AFFINE
+                        for i in range(self.nu)
+                    )
+                )
+
+                if has_builtin_pos_ctrl:
+                    # For models with built-in PD, ctrl represents target position
+                    self.apply_control(desired_pos[: self.nu])
+                else:
+                    pos_error = desired_pos - self.data.qpos[: self.nq]
+                    vel_error = -self.data.qvel[: self.nv]
+                    control = kp * pos_error + kd * vel_error
+                    self.apply_control(control[: self.nu])
             elif control_mode == "velocity":
                 # Velocity control toward target
                 direction = target_array - self.data.qpos[: self.nq]
