@@ -14,6 +14,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from mjlab_mcp_server.physics import PhysicsSandbox, SafetyCheckResult, SafetyPolicy
 
+# Resolve menagerie path relative to this test file:
+# tests/test_physics.py -> mjlab-mcp-server -> e-urdf -> mujoco_menagerie
+MENAGERIE_PATH = Path(__file__).resolve().parent.parent.parent / "mujoco_menagerie"
+UR5E_MODEL_PATH = MENAGERIE_PATH / "universal_robots_ur5e" / "ur5e.xml"
+
 
 class TestSafetyPolicy:
     """Test SafetyPolicy dataclass."""
@@ -44,14 +49,10 @@ class TestPhysicsSandbox:
     @pytest.fixture(scope="class")
     def sandbox(self):
         """Create sandbox with UR5e model."""
-        # Find UR5e model
-        menagerie_path = Path("/root/workspace/rosclaw/e-urdf/mujoco_menagerie")
-        model_path = menagerie_path / "universal_robots_ur5e" / "ur5e.xml"
+        if not UR5E_MODEL_PATH.exists():
+            pytest.skip(f"UR5e model not found at {UR5E_MODEL_PATH}")
 
-        if not model_path.exists():
-            pytest.skip("UR5e model not found in menagerie")
-
-        return PhysicsSandbox(str(model_path))
+        return PhysicsSandbox(str(UR5E_MODEL_PATH))
 
     def test_model_loading(self, sandbox):
         """Test that model loads correctly."""
@@ -106,13 +107,10 @@ class TestSafetyCheck:
     @pytest.fixture(scope="class")
     def sandbox(self):
         """Create sandbox with UR5e model."""
-        menagerie_path = Path("/root/workspace/rosclaw/e-urdf/mujoco_menagerie")
-        model_path = menagerie_path / "universal_robots_ur5e" / "ur5e.xml"
+        if not UR5E_MODEL_PATH.exists():
+            pytest.skip(f"UR5e model not found at {UR5E_MODEL_PATH}")
 
-        if not model_path.exists():
-            pytest.skip("UR5e model not found")
-
-        return PhysicsSandbox(str(model_path))
+        return PhysicsSandbox(str(UR5E_MODEL_PATH))
 
     def test_safe_trajectory(self, sandbox):
         """Test validation of safe trajectory."""
@@ -156,13 +154,10 @@ class TestModelInfo:
 
     def test_get_model_info(self):
         """Test model info extraction."""
-        menagerie_path = Path("/root/workspace/rosclaw/e-urdf/mujoco_menagerie")
-        model_path = menagerie_path / "universal_robots_ur5e" / "ur5e.xml"
+        if not UR5E_MODEL_PATH.exists():
+            pytest.skip(f"UR5e model not found at {UR5E_MODEL_PATH}")
 
-        if not model_path.exists():
-            pytest.skip("UR5e model not found")
-
-        sandbox = PhysicsSandbox(str(model_path))
+        sandbox = PhysicsSandbox(str(UR5E_MODEL_PATH))
         info = sandbox.get_model_info()
 
         assert "model_path" in info
