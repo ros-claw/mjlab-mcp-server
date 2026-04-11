@@ -303,7 +303,8 @@ pytest tests/ --cov=mjlab_mcp_server --cov-report=html
 - [mjlab Documentation](https://mujocolab.github.io/mjlab/)
 - [e-URDF Zoo](https://github.com/ros-claw/e-urdf-zoo) — Pre-configured robot assets with safety policies
 - [MCP Protocol](https://modelcontextprotocol.io/)
-- [ROSClaw Architecture](../rosclaw/ROSClaw_具身智能操作系统工程白皮书_(V1.0).md)
+- [ROSClaw](https://github.com/ros-claw/rosclaw) — Embodied Intelligence Operating System
+- [ROSClaw Paper (arXiv)](https://arxiv.org/pdf/2604.04664) — Technical Architecture Whitepaper
 
 ## Part of ROSClaw
 
