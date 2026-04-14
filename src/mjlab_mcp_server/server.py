@@ -17,9 +17,11 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from .advanced_tools import MuJoCoAdvancedTools
 from .batch_validator import BatchValidator, TrajectoryCandidate
 from .physics import PhysicsSandbox, SafetyCheckResult
 from .reality_sync import RealitySync, RealitySyncManager
+from .renderer import MuJoCoRenderer
 from .semantic_translator import SemanticTranslator
 
 # Initialize MCP Server
@@ -39,6 +41,12 @@ _batch_validator: BatchValidator | None = None
 
 # Semantic translator (initialized lazily)
 _semantic_translator: SemanticTranslator | None = None
+
+# Renderer (initialized lazily)
+_renderer: MuJoCoRenderer | None = None
+
+# Advanced tools (initialized lazily)
+_advanced_tools: MuJoCoAdvancedTools | None = None
 
 # Default e-URDF-Zoo path: resolve next to the package installation (e.g. ../e-urdf-zoo)
 _DEFAULT_E_URDF_ZOO_PATH = str(Path(__file__).resolve().parent.parent.parent.parent / "e-urdf-zoo")
@@ -677,14 +685,419 @@ def get_safety_limits() -> str:
         return f'{{"error": "{str(e)}"}}'
 
 
+# ==========================================================================
+# Rendering Tools
+# ==========================================================================
+
+
+def get_renderer() -> MuJoCoRenderer:
+    """Get or initialize the renderer."""
+    global _renderer
+    if _renderer is None:
+        sandbox = get_sandbox()
+        _renderer = MuJoCoRenderer(sandbox)
+    return _renderer
+
+
+def get_advanced_tools() -> MuJoCoAdvancedTools:
+    """Get or initialize advanced tools."""
+    global _advanced_tools
+    if _advanced_tools is None:
+        sandbox = get_sandbox()
+        _advanced_tools = MuJoCoAdvancedTools(sandbox)
+    return _advanced_tools
+
+
+@mcp.tool()
+def render_current_state(
+    width: int = 640,
+    height: int = 480,
+    camera_name: str | None = None,
+    azimuth: float = -60.0,
+    elevation: float = -30.0,
+) -> str:
+    """
+    Render the current robot state as an image.
+
+    This allows LLM to "see" the current robot state in the simulation.
+
+    Args:
+        width: Image width in pixels (default: 640)
+        height: Image height in pixels (default: 480)
+        camera_name: Named camera from model (optional)
+        azimuth: Camera azimuth angle for free camera (default: -60)
+        elevation: Camera elevation angle for free camera (default: -30)
+
+    Returns:
+        JSON with base64-encoded PNG image and metadata
+    """
+    try:
+        renderer = get_renderer()
+        result = renderer.render_current_state(
+            width=width,
+            height=height,
+            camera_name=camera_name,
+            azimuth=azimuth,
+            elevation=elevation,
+        )
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Rendering failed: {str(e)}"})
+
+
+@mcp.tool()
+def render_trajectory_preview(
+    current_joints: list[float],
+    target_joints: list[float],
+    width: int = 480,
+    height: int = 360,
+    frames: int = 5,
+) -> str:
+    """
+    Render a trajectory preview as a sequence of frames.
+
+    Visualizes the motion from current to target joint positions.
+
+    Args:
+        current_joints: Current joint positions
+        target_joints: Target joint positions
+        width: Frame width (default: 480)
+        height: Frame height (default: 360)
+        frames: Number of frames to generate (default: 5)
+
+    Returns:
+        JSON with list of base64-encoded frame images
+    """
+    try:
+        renderer = get_renderer()
+
+        # Create simple linear trajectory
+        import numpy as np
+
+        current = np.array(current_joints)
+        target = np.array(target_joints)
+        trajectory = [
+            (current + (target - current) * t).tolist()
+            for t in np.linspace(0, 1, frames)
+        ]
+
+        result = renderer.render_trajectory_preview(
+            trajectory=trajectory,
+            width=width,
+            height=height,
+            frames=frames,
+        )
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Trajectory preview failed: {str(e)}"})
+
+
+@mcp.tool()
+def render_collision_debug(
+    width: int = 640,
+    height: int = 480,
+) -> str:
+    """
+    Render scene with collision debug visualization.
+
+    Shows contact points and penetration areas.
+
+    Args:
+        width: Image width (default: 640)
+        height: Image height (default: 480)
+
+    Returns:
+        JSON with base64-encoded image and contact information
+    """
+    try:
+        renderer = get_renderer()
+        result = renderer.render_collision_debug(width=width, height=height)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Collision debug failed: {str(e)}"})
+
+
+@mcp.tool()
+def render_depth_map(
+    width: int = 640,
+    height: int = 480,
+    max_depth: float = 5.0,
+) -> str:
+    """
+    Render depth map from camera perspective.
+
+    Useful for grasp planning and obstacle avoidance.
+
+    Args:
+        width: Image width (default: 640)
+        height: Image height (default: 480)
+        max_depth: Maximum depth in meters (default: 5.0)
+
+    Returns:
+        JSON with base64-encoded depth map and statistics
+    """
+    try:
+        renderer = get_renderer()
+        result = renderer.render_depth_map(width=width, height=height, max_depth=max_depth)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Depth map rendering failed: {str(e)}"})
+
+
+@mcp.tool()
+def save_screenshot(
+    filepath: str,
+    width: int = 1920,
+    height: int = 1080,
+) -> str:
+    """
+    Save high-quality screenshot to file.
+
+    Args:
+        filepath: Path to save the image (e.g., "/tmp/robot_state.png")
+        width: Image width (default: 1920)
+        height: Image height (default: 1080)
+
+    Returns:
+        JSON with save status and file info
+    """
+    try:
+        renderer = get_renderer()
+        result = renderer.save_screenshot(filepath=filepath, width=width, height=height)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Screenshot failed: {str(e)}"})
+
+
+# ==========================================================================
+# Advanced MuJoCo Tools
+# ==========================================================================
+
+
+@mcp.tool()
+def solve_inverse_kinematics(
+    target_pos: list[float],
+    target_quat: list[float] | None = None,
+    body_name: str | None = None,
+    max_iterations: int = 100,
+    tolerance: float = 1e-4,
+) -> str:
+    """
+    Solve inverse kinematics for target end-effector pose.
+
+    Computes joint angles that place the end-effector at the target position.
+
+    Args:
+        target_pos: Target position [x, y, z] in meters
+        target_quat: Target quaternion [qx, qy, qz, qw] (optional)
+        body_name: End-effector body name (default: last body)
+        max_iterations: Maximum optimization iterations (default: 100)
+        tolerance: Position error tolerance (default: 1e-4)
+
+    Returns:
+        JSON with IK solution including joint angles
+    """
+    try:
+        tools = get_advanced_tools()
+        result = tools.solve_ik(
+            target_pos=target_pos,
+            target_quat=target_quat,
+            body_name=body_name,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+        )
+        return json.dumps(
+            {
+                "success": result.success,
+                "joint_angles": result.joint_angles,
+                "error_pos": result.error_pos,
+                "error_rot": result.error_rot,
+                "iterations": result.iterations,
+                "message": result.message,
+            },
+            indent=2,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"IK failed: {str(e)}"})
+
+
+@mcp.tool()
+def get_contact_forces() -> str:
+    """
+    Get detailed contact force information.
+
+    Analyzes all contact points between bodies including force magnitudes.
+
+    Returns:
+        JSON with list of contacts and force data
+    """
+    try:
+        tools = get_advanced_tools()
+        contacts = tools.get_contact_forces()
+        return json.dumps(
+            {
+                "num_contacts": len(contacts),
+                "contacts": [
+                    {
+                        "body1": c.body1,
+                        "body2": c.body2,
+                        "contact_point": c.contact_point,
+                        "penetration_depth": c.penetration_depth,
+                        "force_normal": c.force_normal,
+                        "force_tangent": c.force_tangent,
+                        "torque": c.torque,
+                    }
+                    for c in contacts
+                ],
+            },
+            indent=2,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"Contact analysis failed: {str(e)}"})
+
+
+@mcp.tool()
+def analyze_contact_stability() -> str:
+    """
+    Analyze contact stability for grasp/manipulation.
+
+    Checks if current contact configuration provides stable force closure.
+
+    Returns:
+        JSON with stability metrics and assessment
+    """
+    try:
+        tools = get_advanced_tools()
+        result = tools.analyze_contact_stability()
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Stability analysis failed: {str(e)}"})
+
+
+@mcp.tool()
+def get_sensor_data(
+    sensor_types: list[str] | None = None,
+) -> str:
+    """
+    Get simulated sensor readings.
+
+    Simulates IMU, force/torque, and joint sensors.
+
+    Args:
+        sensor_types: List of sensor types ["imu", "force", "joint"]
+                     (default: ["imu", "joint"])
+
+    Returns:
+        JSON with sensor readings
+    """
+    try:
+        tools = get_advanced_tools()
+        if sensor_types is None:
+            sensor_types = ["imu", "joint"]
+        data = tools.get_sensor_data(sensor_types)
+        return json.dumps(
+            {
+                "accelerometer": data.accelerometer,
+                "gyroscope": data.gyroscope,
+                "magnetometer": data.magnetometer,
+                "force": data.force,
+                "torque": data.torque,
+                "joint_positions": data.joint_positions,
+                "joint_velocities": data.joint_velocities,
+                "joint_torques": data.joint_torques,
+            },
+            indent=2,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"Sensor reading failed: {str(e)}"})
+
+
+@mcp.tool()
+def sample_grasp_poses(
+    object_pos: list[float],
+    num_samples: int = 10,
+    approach_radius: float = 0.2,
+) -> str:
+    """
+    Sample candidate grasp poses around an object.
+
+    Generates grasp poses from different approach directions.
+
+    Args:
+        object_pos: Object center position [x, y, z]
+        num_samples: Number of poses to sample (default: 10)
+        approach_radius: Distance from object (default: 0.2m)
+
+    Returns:
+        JSON with sorted list of grasp pose candidates
+    """
+    try:
+        tools = get_advanced_tools()
+        poses = tools.sample_grasp_poses(
+            object_pos=object_pos,
+            num_samples=num_samples,
+            approach_radius=approach_radius,
+        )
+        return json.dumps(
+            {
+                "num_samples": len(poses),
+                "poses": [
+                    {
+                        "pose": p.pose,
+                        "quality_score": p.quality_score,
+                        "approach_direction": p.approach_direction,
+                    }
+                    for p in poses
+                ],
+            },
+            indent=2,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"Grasp sampling failed: {str(e)}"})
+
+
+@mcp.tool()
+def apply_domain_randomization(
+    body_mass_range: tuple[float, float] = (0.9, 1.1),
+    joint_friction_range: tuple[float, float] = (0.8, 1.2),
+    gravity_range: tuple[float, float] = (9.0, 10.0),
+    seed: int | None = None,
+) -> str:
+    """
+    Apply domain randomization for sim-to-real transfer.
+
+    Randomizes physical parameters to improve policy robustness.
+
+    Args:
+        body_mass_range: Mass multiplier range (default: 0.9-1.1)
+        joint_friction_range: Friction multiplier range (default: 0.8-1.2)
+        gravity_range: Gravity magnitude range (default: 9.0-10.0)
+        seed: Random seed for reproducibility (optional)
+
+    Returns:
+        JSON with applied randomization values
+    """
+    try:
+        tools = get_advanced_tools()
+        changes = tools.apply_domain_randomization(
+            body_mass_range=body_mass_range,
+            joint_friction_range=joint_friction_range,
+            gravity_range=gravity_range,
+            seed=seed,
+        )
+        return json.dumps(changes, indent=2)
+    except Exception as e:
+        return json.dumps({"error": f"Domain randomization failed: {str(e)}"})
+
+
 def main() -> None:
     """Main entry point for the MCP server."""
     print("=" * 60, file=sys.stderr)
     print("MJLab MCP Server - Physics Sandbox Firewall V2.0", file=sys.stderr)
-    print("e-URDF-Zoo + Reality Sync + Semantic Translation Enabled", file=sys.stderr)
+    print("e-URDF-Zoo + Reality Sync + Semantic Translation + Rendering Enabled", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
     print("", file=sys.stderr)
-    print("Available tools:", file=sys.stderr)
+    print("Core Tools:", file=sys.stderr)
     print("  - load_embodiment: Load robot from e-URDF-Zoo (RECOMMENDED)", file=sys.stderr)
     print("  - load_model: Load a MuJoCo model directly", file=sys.stderr)
     print("  - verify_action_safety: Validate robot action safety", file=sys.stderr)
@@ -692,6 +1105,21 @@ def main() -> None:
     print("  - sync_reality: Sync simulation to real robot state", file=sys.stderr)
     print("  - get_model_info: Get model information", file=sys.stderr)
     print("  - list_available_models: List MuJoCo Menagerie models", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Rendering Tools:", file=sys.stderr)
+    print("  - render_current_state: Render robot state as image", file=sys.stderr)
+    print("  - render_trajectory_preview: Visualize trajectory motion", file=sys.stderr)
+    print("  - render_collision_debug: Show collision visualization", file=sys.stderr)
+    print("  - render_depth_map: Generate depth map", file=sys.stderr)
+    print("  - save_screenshot: Save high-res screenshot", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("Advanced Tools:", file=sys.stderr)
+    print("  - solve_inverse_kinematics: IK solver", file=sys.stderr)
+    print("  - get_contact_forces: Contact force analysis", file=sys.stderr)
+    print("  - analyze_contact_stability: Grasp stability check", file=sys.stderr)
+    print("  - get_sensor_data: IMU/force/joint sensors", file=sys.stderr)
+    print("  - sample_grasp_poses: Sample grasp candidates", file=sys.stderr)
+    print("  - apply_domain_randomization: Sim-to-real randomization", file=sys.stderr)
     print("", file=sys.stderr)
     print("e-URDF Resources:", file=sys.stderr)
     print("  - e_urdf://{robot_id}/system_prompt", file=sys.stderr)
