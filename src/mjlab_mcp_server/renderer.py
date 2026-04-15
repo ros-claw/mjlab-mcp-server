@@ -59,13 +59,19 @@ class MuJoCoRenderer:
 
         camera = mujoco.MjvCamera()
 
-        if config.camera_name and config.camera_name in self.sandbox.body_names:
+        if config.camera_name:
             # Use named camera from model
             camera_id = mujoco.mj_name2id(
                 self.model, mujoco.mjtObj.mjOBJ_CAMERA, config.camera_name
             )
-            camera.type = mujoco.mjtCamera.mjCAMERA_FIXED
-            camera.fixedcamid = camera_id
+            if camera_id >= 0:
+                camera.type = mujoco.mjtCamera.mjCAMERA_FIXED
+                camera.fixedcamid = camera_id
+            else:
+                # Camera not found, fall back to free camera
+                camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+                camera.azimuth = config.azimuth
+                camera.elevation = config.elevation
         else:
             # Use free camera with custom angles
             camera.type = mujoco.mjtCamera.mjCAMERA_FREE
@@ -293,12 +299,13 @@ class MuJoCoRenderer:
 
         # Setup renderer for depth
         renderer = mujoco.Renderer(self.model, height=height, width=width)
+        renderer.enable_depth_rendering()
         config = RenderConfig(width=width, height=height, camera_name=camera_name)
         camera = self._setup_camera(config)
 
         # Render depth
         renderer.update_scene(self.data, camera=camera)
-        depth = renderer.render(depth=True)
+        depth = renderer.render()
 
         # Normalize depth for visualization (0-255)
         depth_normalized = np.clip(depth / max_depth, 0, 1)

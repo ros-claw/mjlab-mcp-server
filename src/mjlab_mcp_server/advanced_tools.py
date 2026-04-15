@@ -122,14 +122,20 @@ class MuJoCoAdvancedTools:
                 self.model, mujoco.mjtObj.mjOBJ_BODY, body_name
             )
 
-        # Get joint indices to control
+        # Get joint indices to control and their DOF addresses
         if joint_names is None:
-            # Use all actuated joints
+            # Use all actuated joints (assume first nu joints control first nu DOF)
             joint_ids = list(range(self.model.nu))
+            dof_ids = list(range(self.model.nu))
         else:
             joint_ids = [
                 mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, name)
                 for name in joint_names
+            ]
+            # Map joint IDs to their DOF addresses (handles joint qpos/dof mapping)
+            dof_ids = [
+                self.model.jnt_dofadr[jid] if jid < self.model.njnt else i
+                for i, jid in enumerate(joint_ids)
             ]
 
         # Save current state
@@ -159,10 +165,11 @@ class MuJoCoAdvancedTools:
                 best_qpos = qpos.copy()
 
             if error_norm < tolerance:
-                # Success!
+                # Success! Return joint angles at controlled DOF positions
+                solution_qpos = [best_qpos[did] for did in dof_ids]
                 return IKSolution(
                     success=True,
-                    joint_angles=best_qpos[: len(joint_ids)].tolist(),
+                    joint_angles=solution_qpos,
                     error_pos=error_norm,
                     error_rot=0.0,
                     iterations=iteration + 1,
@@ -173,8 +180,8 @@ class MuJoCoAdvancedTools:
             jac_pos = np.zeros((3, self.model.nv))
             mujoco.mj_jacBody(self.model, self.data, jac_pos, None, body_id)
 
-            # Use only controlled joints
-            jac_reduced = jac_pos[:, : len(joint_ids)]
+            # Use only controlled DOFs (columns corresponding to our joints)
+            jac_reduced = jac_pos[:, dof_ids]
 
             # Damped least squares
             damping = 0.1
@@ -184,8 +191,9 @@ class MuJoCoAdvancedTools:
                 jac_jac_T + damping_matrix, pos_error
             )
 
-            # Update joint positions
-            qpos[: len(joint_ids)] += delta_q * 0.5  # Step size
+            # Update joint positions at correct DOF indices
+            for i, did in enumerate(dof_ids):
+                qpos[did] += delta_q[i] * 0.5  # Step size
 
             # Apply to simulation
             self.data.qpos[:] = qpos
@@ -194,10 +202,11 @@ class MuJoCoAdvancedTools:
         self.data.qpos[:] = qpos_init
         mujoco.mj_forward(self.model, self.data)
 
-        # Return best solution found
+        # Return best solution found (extract values at controlled DOF positions)
+        solution_qpos = [best_qpos[did] for did in dof_ids]
         return IKSolution(
             success=best_error < tolerance * 10,  # Looser tolerance
-            joint_angles=best_qpos[: len(joint_ids)].tolist(),
+            joint_angles=solution_qpos,
             error_pos=best_error,
             error_rot=0.0,
             iterations=max_iterations,
@@ -312,10 +321,10 @@ class MuJoCoAdvancedTools:
         # Ensure physics is up to date
         mujoco.mj_forward(self.model, self.data)
 
-        if "imu" in sensor_types:
-            # Simulate IMU at root body (body 0)
-            root_body_id = 0
+        # Root body for IMU/force sensors (typically body 0 / world or base)
+        root_body_id = 0
 
+        if "imu" in sensor_types:
             # Accelerometer (linear acceleration)
             data.accelerometer = self.data.cacc[root_body_id * 6 : root_body_id * 6 + 3].tolist()
 
